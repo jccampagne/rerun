@@ -4,7 +4,7 @@ use nohash_hasher::IntSet;
 
 use re_entity_db::EntityDb;
 use re_log_types::EntityPath;
-use re_types::blueprint::archetypes::LineGrid3D;
+use re_types::blueprint::archetypes::{Eye3D, LineGrid3D};
 use re_types::components;
 use re_types::{Component as _, View as _, ViewClassIdentifier, blueprint::archetypes::Background};
 use re_ui::{Help, UiExt as _, list_item};
