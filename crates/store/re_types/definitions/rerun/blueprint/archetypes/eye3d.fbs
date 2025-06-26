@@ -10,9 +10,17 @@ table Eye3D (
   // "attr.rust.derive": "Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable"
   // "attr.rust.new_pub_crate"
 ) {
+
+  /// Eye Kind
+  kind: rerun.blueprint.components.Eye3DKind ("attr.rerun.component_required", order: 1000);
+
   /// Position of eye.
-  position: rerun.components.Position3D ("attr.rerun.component_required", order: 1000);
+  position: rerun.components.Position3D ("attr.rerun.component_required", order: 2000);
 
   /// target for eye
-  target: rerun.components.Position3D ("attr.rerun.component_required", order: 2000);
+  target: rerun.components.Position3D ("attr.rerun.component_required", order: 3000);
+
+  /// Translation speed of the eye -- should be positive only (more constrainted than scalar)
+  speed: rerun.components.Scalar ("attr.rerun.component_required", order: 5000);
+
 }
