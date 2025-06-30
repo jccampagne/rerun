@@ -116,19 +116,11 @@ impl View3DState {
         bounding_boxes: &SceneBoundingBoxes,
         space_cameras: &[SpaceCamera3D],
         scene_view_coordinates: Option<ViewCoordinates>,
-        eye_property: ViewProperty,
+        eye_property: &ViewProperty,
     ) -> ViewEye {
-        // // let component_descr = field.component_descriptor(property.archetype_name);
-        // let ca: Option<std::sync::Arc<dyn arrow::array::Array + 'static>> =
-        // //     eye_property.component_array::<_>(&Eye3D::descriptor_speed());
-        // // // let component_array = property.component_raw(&component_descr);
-        // let component_path = ComponentPath::new(entity_path.clone(), component_descr);
-        // let component_descr = &component_path.component_descriptor;
-
-        // // let component_descr = field.component_descriptor(eye_property.archetype_name);
-        // let component_array = eye_property.component_raw(&component_descr);
-        // let row_id = eye_property.component_row_id(&component_descr);
-
+        // FIXME: test on self.last_eye_interaction.is_none() is disabled for now,
+        // as it does not workproperly - need to fix this properly
+        //
         // If the user has not interacted with the eye-camera yet, continue to
         // interpolate to the new default eye. This gives much better robustness
         // with scenes that change over time.
@@ -168,28 +160,16 @@ impl View3DState {
             .view_eye
             .get_or_insert_with(|| default_eye(&bounding_boxes.current, scene_view_coordinates));
 
-        // JCJCJC --------------------------------
-        let component_descr = re_types::ComponentDescriptor {
-            archetype: Some("rerun.blueprint.archetypes.Eye3D".into()),
-            component: "Eye3D:spin_speed".into(),
-            component_type: Some("rerun.components.Scalar".into()),
+        let maybe_eye_spin = extract_eye_spin_speed(eye_property);
+        if let Some(speed) = maybe_eye_spin {
+            let delta = egui::vec2(
+                -response.ctx.input(|i| i.stable_dt).at_most(0.1) * speed,
+                0.0,
+            );
+            view_eye.rotate(delta);
+            response.ctx.request_repaint();
         };
-        // let eye_spin = eye_property.component_array::<Eye3DSpin>(&component_descr);/// whoopsie
-        let eye_spin = eye_property.component_array::<Scalar>(&component_descr);
-        //eye_spin =      Ok(Some([Scalar(Float64(0.062))]))
-        // JCJCJC --------------------------------
 
-        if let Ok(Some(speed_arr)) = eye_spin {
-            if let Some(Scalar(re_types::datatypes::Float64(speed))) = speed_arr.first() {
-                if *speed > 0.0 {
-                    view_eye.rotate(egui::vec2(
-                        -response.ctx.input(|i| i.stable_dt).at_most(0.1) * (*speed as f32),
-                        0.0,
-                    ));
-                    response.ctx.request_repaint();
-                }
-            }
-        }
         if let Some(cam_interpolation) = &mut self.eye_interpolation {
             cam_interpolation.elapsed_time += response.ctx.input(|i| i.stable_dt).at_most(0.1);
 
@@ -365,6 +345,25 @@ impl View3DState {
     }
 }
 
+fn extract_eye_spin_speed(eye_property: &ViewProperty) -> Option<f32> {
+    let eye_spin_comp_descr = re_types::ComponentDescriptor {
+        archetype: Some("rerun.blueprint.archetypes.Eye3D".into()),
+        component: "Eye3D:spin_speed".into(),
+        component_type: Some("rerun.components.Scalar".into()),
+    };
+    let eye_spin_component = eye_property.component_array::<Scalar>(&eye_spin_comp_descr);
+    if let Ok(Some(speed_arr)) = eye_spin_component {
+        if let Some(Scalar(re_types::datatypes::Float64(speed))) = speed_arr.first() {
+            if *speed > 0.0 {
+                // FIXME: see how conversion is done in the rest of the code base
+                let speed = *speed as f32;
+                return Some(speed);
+            }
+        }
+    }
+    None
+}
+
 #[derive(Clone, PartialEq)]
 struct EyeInterpolation {
     elapsed_time: f32,
@@ -469,35 +468,18 @@ impl SpatialView3D {
             return Ok(()); // protect against problems with zero-sized views
         }
 
-        // JCJCJC get eye config --------------------------------------------------------------------------------
         let eye_property = ViewProperty::from_archetype::<Eye3D>(
             ctx.blueprint_db(),
             ctx.blueprint_query,
             query.view_id,
         );
-        re_log::debug!("eye_config = {:?}", eye_property);
-
-        let component_descr = re_types::ComponentDescriptor {
-            archetype: Some("rerun.blueprint.archetypes.Eye3D".into()),
-            component: "Eye3D:spin_speed".into(),
-            component_type: Some("rerun.components.Scalar".into()),
-        };
-        // let eye_spin = eye_property.component_array::<Eye3DSpin>(&component_descr);/// whoopsie
-        let eye_spin = eye_property.component_array::<Scalar>(&component_descr);
-
-        re_log::debug!(
-            "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ SPIN = {:?}",
-            eye_spin
-        );
-
-        // JCJCJC get eye config --------------------------------------------------------------------------------
 
         let view_eye = state.state_3d.update_eye(
             &response,
             &state.bounding_boxes,
             space_cameras,
             scene_view_coordinates,
-            eye_property,
+            &eye_property,
         );
         let eye = view_eye.to_eye();
 
