@@ -9,6 +9,7 @@ from rerun_bindings import (
     FileSink as FileSink,
     GrpcSink as GrpcSink,
 )
+from typing_extensions import deprecated
 
 from rerun.blueprint.api import BlueprintLike, create_in_memory_blueprint
 from rerun.dataframe import Recording
@@ -323,6 +324,9 @@ def serve_grpc(
     You can limit the amount of data buffered by the gRPC server with the `server_memory_limit` argument.
     Once reached, the earliest logged data will be dropped. Static data is never dropped.
 
+    It is highly recommended that you set the memory limit to `0B` if both the server and client are running
+    on the same machine, otherwise you're potentially doubling your memory usage!
+
     Returns the URI of the server so you can connect the viewer to it.
 
     This function returns immediately. In order to keep the server running, you must keep the Python process running
@@ -374,6 +378,10 @@ def serve_grpc(
     )
 
 
+@deprecated(
+    """Use a combination of `rr.serve_grpc` and `rr.serve_web_viewer` instead.
+    See: https://www.rerun.io/docs/reference/migration/migration-0-24?speculative-link for more details.""",
+)
 def serve_web(
     *,
     open_browser: bool = True,
@@ -395,6 +403,10 @@ def serve_web(
     This function returns immediately.
 
     Calling `serve_web` is equivalent to calling [`rerun.serve_grpc`][] followed by [`rerun.serve_web_viewer`][].
+    ```
+    server_uri = rr.serve_grpc(grpc_port=grpc_port, default_blueprint=default_blueprint, server_memory_limit=server_memory_limit)
+    rr.serve_web_viewer(web_port=web_port, open_browser=open_browser, connect_to=server_uri)
+    ```
 
     Parameters
     ----------
@@ -531,6 +543,7 @@ def spawn(
     port: int = 9876,
     connect: bool = True,
     memory_limit: str = "75%",
+    server_memory_limit: str = "0B",
     hide_welcome_screen: bool = False,
     detach_process: bool = True,
     default_blueprint: BlueprintLike | None = None,
@@ -554,6 +567,13 @@ def spawn(
         An upper limit on how much memory the Rerun Viewer should use.
         When this limit is reached, Rerun will drop the oldest data.
         Example: `16GB` or `50%` (of system total).
+    server_memory_limit:
+        An upper limit on how much memory the gRPC server running
+        in the same process as the Rerun Viewer should use.
+        When this limit is reached, Rerun will drop the oldest data.
+        Example: `16GB` or `50%` (of system total).
+
+        Defaults to `0B`.
     hide_welcome_screen:
         Hide the normal Rerun welcome screen.
     detach_process:
@@ -575,7 +595,11 @@ def spawn(
         return
 
     _spawn_viewer(
-        port=port, memory_limit=memory_limit, hide_welcome_screen=hide_welcome_screen, detach_process=detach_process
+        port=port,
+        memory_limit=memory_limit,
+        server_memory_limit=server_memory_limit,
+        hide_welcome_screen=hide_welcome_screen,
+        detach_process=detach_process,
     )
 
     if connect:

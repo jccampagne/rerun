@@ -11,9 +11,8 @@ use pyo3::{
 use tracing::Instrument as _;
 
 use re_arrow_util::ArrowArrayDowncastRef as _;
-use re_chunk::{LatestAtQuery, RangeQuery};
-use re_chunk_store::ChunkStore;
-use re_dataframe::{ChunkStoreHandle, ViewContentsSelector};
+use re_chunk_store::{ChunkStore, QueryExpression};
+use re_dataframe::ChunkStoreHandle;
 use re_grpc_client::{ConnectionClient, ConnectionRegistryHandle};
 use re_log_encoding::codec::wire::decoder::Decode as _;
 use re_log_types::{ApplicationId, EntryId, StoreId, StoreInfo, StoreKind, StoreSource};
@@ -372,38 +371,17 @@ impl ConnectionHandle {
         &self,
         py: Python<'_>,
         dataset_id: EntryId,
-        contents: &Option<ViewContentsSelector>,
-        latest_at: Option<LatestAtQuery>,
-        range: Option<RangeQuery>,
+        query_expression: &QueryExpression,
         partition_ids: &[impl AsRef<str> + Sync],
     ) -> PyResult<BTreeMap<String, ChunkStoreHandle>> {
         use futures::StreamExt as _;
 
-        let entity_paths = contents
+        let entity_paths = query_expression
+            .view_contents
             .as_ref()
             .map_or(vec![], |contents| contents.keys().collect::<Vec<_>>());
 
-        let query = Query {
-            latest_at: latest_at.map(|latest_at| QueryLatestAt {
-                index: latest_at.timeline().to_string(),
-                at: latest_at.at().as_i64(),
-                fuzzy_descriptors: vec![], // TODO(jleibs): support this
-            }),
-            range: range.map(|range| {
-                QueryRange {
-                    index: range.timeline().to_string(),
-                    index_range: range.range,
-                    fuzzy_descriptors: vec![], // TODO(jleibs): support this
-                }
-            }),
-            columns_always_include_everything: false,
-            columns_always_include_chunk_ids: false,
-            columns_always_include_entity_paths: false,
-            columns_always_include_byte_offsets: false,
-            columns_always_include_static_indexes: false,
-            columns_always_include_global_indexes: false,
-            columns_always_include_component_indexes: false,
-        };
+        let query = query_from_query_expression(query_expression);
 
         let partition_ids = partition_ids
             .iter()
@@ -414,6 +392,13 @@ impl ConnectionHandle {
             .into_iter()
             .map(|p| (*p).clone().into())
             .collect();
+
+        // `/**` automatically lowers to a materialized list of entity paths on the client (and
+        // it's not just blindly grabbing all the entity paths from the schemas, there's some extra
+        // logic around /properties and such), which means the only way an empty ViewContents is
+        // used today is because is was parsed from entity paths that didn't exist in the dataset.
+        // Therefore, we are never trying to use a server-side wildcard.
+        let select_all_entity_paths = false;
 
         // NOTE: Do not ever run complex futures chain directly on top of `block_on`, make sure to
         // always spawn new tasks instead.
@@ -437,6 +422,9 @@ impl ConnectionHandle {
                             partition_ids,
                             chunk_ids: vec![],
                             entity_paths,
+                            select_all_entity_paths,
+                            exclude_static_data: false,
+                            exclude_temporal_data: false,
                             query: Some(query.into()),
                         })
                         .instrument(tracing::trace_span!("get_chunks::grpc"))
@@ -599,38 +587,24 @@ impl ConnectionHandle {
         &self,
         py: Python<'_>,
         dataset_id: EntryId,
-        contents: &Option<ViewContentsSelector>,
-        latest_at: Option<LatestAtQuery>,
-        range: Option<RangeQuery>,
+        query_expression: &QueryExpression,
         partition_ids: &[impl AsRef<str> + Sync],
     ) -> PyResult<PyArrowType<Box<dyn RecordBatchReader + Send>>> {
         use tokio_stream::StreamExt as _;
 
-        let entity_paths = contents
+        // `/**` automatically lowers to a materialized list of entity paths on the client (and
+        // it's not just blindly grabbing all the entity paths from the schemas, there's some extra
+        // logic around /properties and such), which means the only way an empty ViewContents is
+        // used today is because is was parsed from entity paths that didn't exist in the dataset.
+        // Therefore, we are never trying to use a server-side wildcard.
+        let select_all_entity_paths = false;
+
+        let entity_paths = query_expression
+            .view_contents
             .as_ref()
             .map_or(vec![], |contents| contents.keys().collect::<Vec<_>>());
 
-        let query = Query {
-            latest_at: latest_at.map(|latest_at| QueryLatestAt {
-                index: latest_at.timeline().to_string(),
-                at: latest_at.at().as_i64(),
-                fuzzy_descriptors: vec![], // TODO(jleibs): support this
-            }),
-            range: range.map(|range| {
-                QueryRange {
-                    index: range.timeline().to_string(),
-                    index_range: range.range,
-                    fuzzy_descriptors: vec![], // TODO(jleibs): support this
-                }
-            }),
-            columns_always_include_everything: false,
-            columns_always_include_chunk_ids: false,
-            columns_always_include_entity_paths: false,
-            columns_always_include_byte_offsets: false,
-            columns_always_include_static_indexes: false,
-            columns_always_include_global_indexes: false,
-            columns_always_include_component_indexes: false,
-        };
+        let query = query_from_query_expression(query_expression);
 
         wait_for_future(py, async {
             let response_stream = self
@@ -648,6 +622,9 @@ impl ConnectionHandle {
                         .into_iter()
                         .map(|p| (*p).clone().into())
                         .collect(),
+                    select_all_entity_paths,
+                    exclude_static_data: false,
+                    exclude_temporal_data: false,
                     query: Some(query.into()),
                     scan_parameters: Some(
                         ScanParameters {
@@ -687,5 +664,37 @@ impl ConnectionHandle {
 
             Ok(PyArrowType(reader))
         })
+    }
+}
+
+fn query_from_query_expression(query_expression: &QueryExpression) -> Query {
+    let latest_at = if query_expression.is_static() {
+        Some(QueryLatestAt::new_static())
+    } else {
+        query_expression
+            .min_latest_at()
+            .map(|latest_at| QueryLatestAt {
+                index: Some(latest_at.timeline().to_string()),
+                at: latest_at.at(),
+                fuzzy_descriptors: vec![], // TODO(jleibs): support this
+            })
+    };
+
+    Query {
+        latest_at,
+        range: query_expression.max_range().map(|range| {
+            QueryRange {
+                index: range.timeline().to_string(),
+                index_range: range.range,
+                fuzzy_descriptors: vec![], // TODO(jleibs): support this
+            }
+        }),
+        columns_always_include_everything: false,
+        columns_always_include_chunk_ids: false,
+        columns_always_include_entity_paths: false,
+        columns_always_include_byte_offsets: false,
+        columns_always_include_static_indexes: false,
+        columns_always_include_global_indexes: false,
+        columns_always_include_component_indexes: false,
     }
 }

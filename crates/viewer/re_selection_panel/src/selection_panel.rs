@@ -181,7 +181,7 @@ impl SelectionPanel {
                 ));
 
                 ui.list_item_flat_noninteractive(
-                    PropertyContent::new("Component type").value_text(if is_static {
+                    PropertyContent::new("Index type").value_text(if is_static {
                         "Static"
                     } else {
                         "Temporal"
@@ -190,7 +190,7 @@ impl SelectionPanel {
 
                 let ComponentDescriptor {
                     archetype: archetype_name,
-                    component: _,
+                    component,
                     component_type,
                 } = component_descriptor;
 
@@ -211,13 +211,12 @@ impl SelectionPanel {
                 }
 
                 ui.list_item_flat_noninteractive(
-                    PropertyContent::new("Archetype field")
-                        .value_text(component_descriptor.archetype_field_name()),
+                    PropertyContent::new("Component").value_text(component.as_str()),
                 );
 
                 if let Some(component_type) = component_type {
-                    ui.list_item_flat_noninteractive(PropertyContent::new("Component").value_fn(
-                        |ui, _| {
+                    ui.list_item_flat_noninteractive(
+                        PropertyContent::new("Component type").value_fn(|ui, _| {
                             ui.label(component_type.short_name()).on_hover_ui(|ui| {
                                 ui.spacing_mut().item_spacing.y = 12.0;
 
@@ -237,8 +236,8 @@ impl SelectionPanel {
                                     ui.re_hyperlink("Full documentation", doc_url, true);
                                 }
                             });
-                        },
-                    ));
+                        }),
+                    );
                 }
 
                 list_existing_data_blueprints(ctx, viewport, ui, &entity_path.clone().into());

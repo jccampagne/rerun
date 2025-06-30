@@ -3,14 +3,16 @@ use std::sync::Arc;
 use arrow::datatypes::Fields;
 use datafusion::prelude::SessionContext;
 use datafusion::sql::TableReference;
-use egui::{Frame, Id, Margin, RichText};
+use egui::containers::menu::MenuConfig;
+use egui::{Frame, Id, Margin, RichText, TopBottomPanel, Ui, Widget as _};
 use egui_table::{CellInfo, HeaderCellInfo};
 use nohash_hasher::IntMap;
 
-use re_log_types::{EntryId, TimelineName};
+use re_format::format_uint;
+use re_log_types::{EntryId, TimelineName, Timestamp};
 use re_sorbet::{ColumnDescriptorRef, SorbetSchema};
-use re_ui::UiExt as _;
-use re_ui::list_item::ItemButton;
+use re_ui::menu::menu_style;
+use re_ui::{UiExt as _, icons};
 use re_viewer_context::{AsyncRuntimeHandle, ViewerContext};
 
 use crate::datafusion_adapter::DataFusionAdapter;
@@ -99,9 +101,6 @@ pub struct DataFusionTableWidget<'a> {
     //TODO(ab): for now, this is the only way to have the column visibility/order menu
     title: Option<String>,
 
-    /// If provided and if `title` is set, add a button next to the title.
-    title_button: Option<Box<dyn ItemButton + 'a>>,
-
     /// User-provided closure to provide column blueprint.
     column_blueprint_fn: ColumnBlueprintFn<'a>,
 
@@ -111,14 +110,13 @@ pub struct DataFusionTableWidget<'a> {
 
 impl<'a> DataFusionTableWidget<'a> {
     /// Clears all caches related to this session context and table reference.
-    pub fn clear_state(
+    pub fn refresh(
         egui_ctx: &egui::Context,
         session_ctx: &SessionContext,
         table_ref: impl Into<TableReference>,
     ) {
         let id = id_from_session_context_and_table(session_ctx, &table_ref.into());
 
-        TableConfig::clear_state(egui_ctx, id);
         DataFusionAdapter::clear_state(egui_ctx, id);
     }
 
@@ -128,7 +126,6 @@ impl<'a> DataFusionTableWidget<'a> {
             table_ref: table_ref.into(),
 
             title: None,
-            title_button: None,
             column_blueprint_fn: Box::new(|_| ColumnBlueprint::default()),
             initial_blueprint: Default::default(),
         }
@@ -136,12 +133,6 @@ impl<'a> DataFusionTableWidget<'a> {
 
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
-
-        self
-    }
-
-    pub fn title_button(mut self, button: impl ItemButton + 'a) -> Self {
-        self.title_button = Some(Box::new(button));
 
         self
     }
@@ -192,6 +183,15 @@ impl<'a> DataFusionTableWidget<'a> {
         self
     }
 
+    fn loading_ui(ui: &mut egui::Ui) {
+        Frame::new().inner_margin(16.0).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading table…");
+            });
+        });
+    }
+
     pub fn show(
         self,
         viewer_ctx: &ViewerContext<'_>,
@@ -204,7 +204,6 @@ impl<'a> DataFusionTableWidget<'a> {
             session_ctx,
             table_ref,
             title,
-            title_button,
             column_blueprint_fn,
             initial_blueprint,
         } = self;
@@ -213,12 +212,7 @@ impl<'a> DataFusionTableWidget<'a> {
             .table_exist(table_ref.clone())
             .unwrap_or_default()
         {
-            // Let's not be too intrusive here, as this can often happen temporarily while the table
-            // providers are being registered to the session context after refreshing.
-            ui.label(format!(
-                "Loading table… (table `{}` not found in session context)",
-                &table_ref
-            ));
+            Self::loading_ui(ui);
             return;
         }
 
@@ -255,7 +249,7 @@ impl<'a> DataFusionTableWidget<'a> {
                         .clicked()
                     {
                         // This will trigger a fresh query on the next frame.
-                        Self::clear_state(ui.ctx(), &session_ctx, table_ref);
+                        Self::refresh(ui.ctx(), &session_ctx, table_ref);
                     }
                 });
                 return;
@@ -269,7 +263,7 @@ impl<'a> DataFusionTableWidget<'a> {
 
             (None, None) => {
                 // still processing, nothing yet to show
-                ui.label("Loading table…");
+                Self::loading_ui(ui);
                 return;
             }
         };
@@ -326,7 +320,7 @@ impl<'a> DataFusionTableWidget<'a> {
         );
 
         if let Some(title) = title {
-            title_ui(ui, &mut table_config, &title, title_button);
+            title_ui(ui, &mut table_config, &title);
         }
 
         apply_table_style_fixes(ui.style_mut());
@@ -342,6 +336,26 @@ impl<'a> DataFusionTableWidget<'a> {
             new_blueprint: &mut new_blueprint,
             table_config,
         };
+
+        let visible_columns = table_delegate.table_config.visible_columns().count();
+        let total_columns = columns.columns.len();
+
+        let action = Self::bottom_bar_ui(
+            ui,
+            viewer_ctx,
+            session_id,
+            num_rows,
+            visible_columns,
+            total_columns,
+            table_state.queried_at,
+        );
+
+        match action {
+            Some(BottomBarAction::Refresh) => {
+                Self::refresh(ui.ctx(), &session_ctx, table_ref);
+            }
+            None => {}
+        }
 
         egui_table::Table::new()
             .id_salt(session_id)
@@ -360,7 +374,71 @@ impl<'a> DataFusionTableWidget<'a> {
 
         table_delegate.table_config.store(ui.ctx());
         drop(requested_sorbet_batches);
-        table_state.update_query(runtime, ui, new_blueprint);
+        if table_state.blueprint() != &new_blueprint {
+            table_state.update_query(runtime, ui, new_blueprint);
+        }
+    }
+
+    fn bottom_bar_ui(
+        ui: &mut Ui,
+        ctx: &ViewerContext<'_>,
+        session_id: Id,
+        total_rows: u64,
+        visible_columns: usize,
+        total_columns: usize,
+        queried_at: Timestamp,
+    ) -> Option<BottomBarAction> {
+        let mut action = None;
+
+        let frame = Frame::new()
+            .fill(ui.tokens().table_header_bg_fill)
+            .inner_margin(Margin::symmetric(12, 0));
+        TopBottomPanel::bottom(session_id.with("bottom_bar"))
+            .frame(frame)
+            .show_inside(ui, |ui| {
+                let height = 24.0;
+                ui.set_height(height);
+                ui.horizontal_centered(|ui| {
+                    ui.visuals_mut().widgets.noninteractive.fg_stroke.color =
+                        ui.tokens().text_subdued;
+                    ui.visuals_mut().widgets.active.fg_stroke.color = ui.tokens().text_default;
+
+                    egui::Sides::new().show(
+                        ui,
+                        |ui| {
+                            ui.set_height(height);
+
+                            ui.label("rows:");
+                            ui.strong(format_uint(total_rows));
+
+                            ui.add_space(16.0);
+
+                            ui.label("columns:");
+                            ui.strong(format!(
+                                "{} out of {}",
+                                format_uint(visible_columns),
+                                format_uint(total_columns),
+                            ));
+                        },
+                        |ui| {
+                            ui.set_height(height);
+                            if icons::RESET.as_button().ui(ui).clicked() {
+                                action = Some(BottomBarAction::Refresh);
+                            };
+
+                            re_ui::time::short_duration_ui(
+                                ui,
+                                queried_at,
+                                ctx.app_options().timestamp_format,
+                                Ui::strong,
+                            );
+                            ui.label("Last updated:");
+                        },
+                    );
+                });
+            });
+
+        action
     }
 }
 
@@ -371,12 +449,7 @@ fn id_from_session_context_and_table(
     egui::Id::new((session_ctx.session_id(), table_ref))
 }
 
-fn title_ui<'a>(
-    ui: &mut egui::Ui,
-    table_config: &mut TableConfig,
-    title: &str,
-    title_button: Option<Box<dyn ItemButton + 'a>>,
-) {
+fn title_ui(ui: &mut egui::Ui, table_config: &mut TableConfig, title: &str) {
     Frame::new()
         .inner_margin(Margin {
             top: 16,
@@ -389,15 +462,16 @@ fn title_ui<'a>(
                 ui,
                 |ui| {
                     ui.heading(RichText::new(title).strong());
-                    if let Some(title_button) = title_button {
-                        title_button.ui(ui);
-                    }
                 },
                 |ui| {
                     table_config.button_ui(ui);
                 },
             );
         });
+}
+
+enum BottomBarAction {
+    Refresh,
 }
 
 struct DataFusionTableDelegate<'a> {
@@ -451,6 +525,7 @@ impl egui_table::TableDelegate for DataFusionTableDelegate<'_> {
                             egui::containers::menu::MenuButton::from_button(
                                 ui.small_icon_button_widget(&re_ui::icons::MORE, "More options"),
                             )
+                            .config(MenuConfig::new().style(menu_style()))
                             .ui(ui, |ui| {
                                 for sort_direction in SortDirection::iter() {
                                     let already_sorted =
@@ -550,36 +625,36 @@ fn column_descriptor_ui(ui: &mut egui::Ui, column: &ColumnDescriptorRef<'_>) {
                 store_datatype,
                 component_type,
                 entity_path,
-                archetype: archetype_name,
-                component: _component,
+                archetype,
+                component,
                 is_static,
                 is_indicator,
                 is_tombstone,
                 is_semantically_empty,
             } = desc;
 
-            header_property_ui(ui, "Type", "component");
-            header_property_ui(
-                ui,
-                "Component type",
-                component_type.map(|a| a.as_str()).unwrap_or("-"),
-            );
+            header_property_ui(ui, "Column type", "Component");
             header_property_ui(ui, "Entity path", entity_path.to_string());
             datatype_ui(ui, &column.display_name(), store_datatype);
             header_property_ui(
                 ui,
                 "Archetype",
-                archetype_name.map(|a| a.full_name()).unwrap_or("-"),
+                archetype.map(|a| a.full_name()).unwrap_or("-"),
             );
+            header_property_ui(ui, "Component", component);
             header_property_ui(
                 ui,
-                "Archetype field",
-                desc.component_descriptor().archetype_field_name(),
+                "Component type",
+                component_type.map(|a| a.as_str()).unwrap_or("-"),
             );
-            header_property_ui(ui, "Static", is_static.to_string());
-            header_property_ui(ui, "Indicator", is_indicator.to_string());
-            header_property_ui(ui, "Tombstone", is_tombstone.to_string());
-            header_property_ui(ui, "Empty", is_semantically_empty.to_string());
+
+            if false {
+                // TODO(#10315): these are sometimes inaccurate. Also, the user don't care.
+                header_property_ui(ui, "Static", is_static.to_string());
+                header_property_ui(ui, "Indicator", is_indicator.to_string());
+                header_property_ui(ui, "Tombstone", is_tombstone.to_string());
+                header_property_ui(ui, "Empty", is_semantically_empty.to_string());
+            }
         }
     }
 }

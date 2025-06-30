@@ -2,12 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use arrow::{
     array::{RecordBatch as ArrowRecordBatch, RecordBatchOptions as ArrowRecordBatchOptions},
-    datatypes::{FieldRef as ArrowFieldRef, Fields, Schema as ArrowSchema},
+    datatypes::{Fields, Schema as ArrowSchema},
 };
 use re_log::ResultExt as _;
-
-// We might have to move the definitions here, if we ever change the metadata key again.
-use crate::ColumnKind;
 
 fn trim_archetype_prefix(name: &str) -> &str {
     name.trim()
@@ -15,20 +12,32 @@ fn trim_archetype_prefix(name: &str) -> &str {
         .trim_start_matches("rerun.blueprint.archetypes.")
 }
 
-pub fn is_component_column(field: &&ArrowFieldRef) -> bool {
-    ColumnKind::try_from(field.as_ref()).is_ok_and(|kind| kind == ColumnKind::Component)
+pub struct Migration;
+
+impl super::Migration for Migration {
+    const SOURCE_VERSION: semver::Version = semver::Version::new(0, 0, 2);
+    const TARGET_VERSION: semver::Version = semver::Version::new(0, 1, 0);
+
+    fn migrate(batch: ArrowRecordBatch) -> ArrowRecordBatch {
+        rewire_tagged_components(&batch)
+    }
 }
 
 /// Ensures that incoming data is properly tagged and rewires to our now component descriptor format.
 #[tracing::instrument(level = "trace", skip_all)]
-pub fn rewire_tagged_components(batch: &ArrowRecordBatch) -> ArrowRecordBatch {
+fn rewire_tagged_components(batch: &ArrowRecordBatch) -> ArrowRecordBatch {
     re_tracing::profile_function!();
 
     let needs_rewiring = batch
         .schema()
         .metadata()
         .keys()
-        .any(|key| key.starts_with("rerun."));
+        .any(|key| key.starts_with("rerun."))
+        || batch
+            .schema()
+            .fields()
+            .iter()
+            .any(|field| field.metadata().keys().any(|key| key.starts_with("rerun.")));
 
     if !needs_rewiring {
         return batch.clone();
@@ -59,15 +68,42 @@ pub fn rewire_tagged_components(batch: &ArrowRecordBatch) -> ArrowRecordBatch {
             rename_key(&mut metadata, "rerun.is_semantically_empty", "rerun:is_semantically_empty");
             rename_key(&mut metadata, "rerun.is_sorted", "rerun:is_sorted");
 
-            // If component is present, we are encountering a legacy component descriptor.
-            if let Some(component) = metadata.remove("rerun.component") {
+            if field.name().ends_with("Indicator") {
+                let field_name = field.name();
+                // TODO(#8129): Remove indicator components
+                re_log::debug_once!(
+                    "Moving indicator from field to component metadata field: {field_name}"
+                );
+
+                // A lot of defensive code to handle different legacy formats of the indicator component,
+                // including blueprint indicators:
+                if let Some(component) = metadata.remove("rerun.component") {
+                    debug_assert!(
+                        component.ends_with("Indicator"),
+                        "Expected component to end with 'Indicator', got: {component:?}"
+                    );
+                    metadata.insert("rerun:component".to_owned(), component);
+                } else if field_name.starts_with("rerun.") {
+                    // Long name
+                    metadata.insert("rerun:component".to_owned(), field_name.to_string());
+                } else {
+                    // Short name: expand it to be long
+                    metadata.insert("rerun:component".to_owned(), format!("rerun.components.{field_name}"));
+                }
+
+                // Remove everything else.
+                metadata.remove("rerun.archetype");
+                metadata.remove("rerun.archetype_field");
+                metadata.remove("rerun.component");
+            } else if let Some(component) = metadata.remove("rerun.component") {
+                // If component is present, we are encountering a legacy component descriptor.
                 let (archetype, component, component_type) = match (
                     metadata.remove("rerun.archetype"),
                     metadata.remove("rerun.archetype_field"),
                 ) {
                     (None, None) => {
                         // We likely encountered data that was logged via `AnyValues` and do our best effort to convert it.
-                        re_log::debug!(
+                        re_log::debug_once!(
                             "Moving stray component type to component field: {component}"
                         );
                         (None, component, None)
@@ -109,8 +145,8 @@ pub fn rewire_tagged_components(batch: &ArrowRecordBatch) -> ArrowRecordBatch {
                 }
             }
 
-            for key in metadata.keys() {
-                debug_assert!(!key.starts_with("rerun."), "Found metadata key that was not migrated to colon syntax: {key}");
+            for (key, value) in &metadata {
+                debug_assert!(!key.starts_with("rerun."), "Metadata `{key}` (with value `{value}`) was not migrated to colon syntax.");
             }
 
             field.set_metadata(metadata);
@@ -122,11 +158,17 @@ pub fn rewire_tagged_components(batch: &ArrowRecordBatch) -> ArrowRecordBatch {
         .schema()
         .metadata()
         .iter()
-        .map(|(key, value)| {
-            if key.starts_with("rerun.") {
-                re_log::debug_once!("Migrating batch metadata key {key}");
+        .filter_map(|(key, value)| {
+            if key.as_str() == "rerun.version" {
+                // Note that the `Migration` trait takes care of setting the sorbet version.
+                re_log::debug_once!("Dropping 'rerun.version' from metadata.");
+                return None;
             }
-            (key.replace("rerun.", "rerun:"), value.clone())
+
+            if key.starts_with("rerun.") {
+                re_log::debug_once!("Migrating batch metadata key '{key}'");
+            }
+            Some((key.replace("rerun.", "rerun:"), value.clone()))
         })
         .collect();
 
