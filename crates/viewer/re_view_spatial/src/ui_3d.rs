@@ -1,10 +1,9 @@
-use arrow::error;
 use egui::{NumExt as _, emath::RectTransform};
 use glam::{Affine3A, Quat, Vec3};
 use web_time::Instant;
 
 use macaw::BoundingBox;
-use re_log_types::{ComponentPath, EntityPath};
+use re_log_types::EntityPath;
 use re_renderer::{
     LineDrawableBuilder, Size,
     view_builder::{Projection, TargetConfiguration, ViewBuilder},
@@ -12,7 +11,7 @@ use re_renderer::{
 use re_types::{
     blueprint::{
         archetypes::{Background, Eye3D, LineGrid3D},
-        components::{Eye3DSpin, GridSpacing},
+        components::GridSpacing,
     },
     components::{Scalar, ViewCoordinates, Visible},
     view_coordinates::SignedAxis3,
@@ -29,7 +28,7 @@ use re_viewer_context::{
 use re_viewport_blueprint::ViewProperty;
 
 use crate::{
-    SpatialView3D, eye,
+    SpatialView3D,
     scene_bounding_boxes::SceneBoundingBoxes,
     space_camera_3d::SpaceCamera3D,
     transform_cache::query_view_coordinates_at_closest_ancestor,
