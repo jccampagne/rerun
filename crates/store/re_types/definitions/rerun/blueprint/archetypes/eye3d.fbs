@@ -5,10 +5,6 @@ namespace rerun.blueprint.archetypes;
 /// 3D Eye
 table Eye3D (
   "attr.rerun.scope": "blueprint"
-  // "attr.docs.category": "Spatial 3D"
-  // "attr.docs.view_types": "Spatial3DView",
-  // "attr.rust.derive": "Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable"
-  // "attr.rust.new_pub_crate"
 ) {
 
   /// Eye Kind
@@ -22,5 +18,8 @@ table Eye3D (
 
   /// Translation speed of the eye -- should be positive only (more constrainted than scalar)
   speed: rerun.components.Scalar ("attr.rerun.component_required", order: 5000);
+
+  /// Spinning speed of the eye around the "up" axis of the eye.
+  spin_speed: rerun.components.Scalar ("attr.rerun.component_required", order: 6000);
 
 }
