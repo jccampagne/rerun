@@ -3,7 +3,10 @@ use glam::{Mat4, Quat, Vec3, vec3};
 
 use macaw::IsoTransform;
 
-use re_types::{blueprint::components::Eye3DKind, components::LinearSpeed};
+use re_types::{
+    blueprint::{archetypes::Eye3D, components::Eye3DKind},
+    components::LinearSpeed,
+};
 use re_view::controls::{
     DRAG_PAN3D_BUTTON, ROLL_MOUSE, ROLL_MOUSE_ALT, ROLL_MOUSE_MODIFIER, ROTATE3D_BUTTON,
     RuntimeModifiers, SPEED_UP_3D_MODIFIER,
@@ -404,20 +407,7 @@ impl ViewEye {
         view_ctx: &ViewContext<'_>,
         eye_property: &ViewProperty,
     ) -> bool {
-        let eye_linear_speed_comp_descr =
-            re_types::blueprint::archetypes::Eye3D::descriptor_translation_speed();
-        let eye_linear_speed = eye_property.component_or_fallback::<LinearSpeed>(
-            view_ctx,
-            self,
-            &eye_linear_speed_comp_descr,
-        );
-        let mut speed = match eye_linear_speed {
-            Ok(linear_speed) => **linear_speed as f32,
-            Err(err) => {
-                re_log::error!("Error while getting linear speed for eye {}", err);
-                self.speed(bounding_boxes)
-            }
-        };
+        let mut speed = self.fun_name(bounding_boxes, view_ctx, eye_property);
         // Modify speed based on modifiers:
         let os = response.ctx.os();
         response.ctx.input(|input| {
@@ -488,6 +478,26 @@ impl ViewEye {
         }
 
         did_interact
+    }
+
+    fn fun_name(
+        &mut self,
+        bounding_boxes: &SceneBoundingBoxes,
+        view_ctx: &ViewContext<'_>,
+        eye_property: &ViewProperty,
+    ) -> f32 {
+        let eye_linear_speed = eye_property.component_or_fallback::<LinearSpeed>(
+            view_ctx,
+            self,
+            &Eye3D::descriptor_translation_speed(),
+        );
+        match eye_linear_speed {
+            Ok(linear_speed) => **linear_speed as f32,
+            Err(err) => {
+                re_log::error!("Error while getting linear speed for eye {}", err);
+                self.speed(bounding_boxes)
+            }
+        }
     }
 
     /// Listen to WSAD and QE to move the eye.
