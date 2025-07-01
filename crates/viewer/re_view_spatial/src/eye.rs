@@ -595,36 +595,6 @@ impl ViewEye {
     }
 }
 
-// FIXME: Try TypedComponentFallbackProvider???
-// impl ComponentFallbackProvider for ViewEye {
-//     fn try_provide_fallback(
-//         &self,
-//         ctx: &re_viewer_context::QueryContext<'_>,
-//         component: re_types::ComponentType,
-//     ) -> re_viewer_context::ComponentFallbackProviderResult {
-//         if component == <LinearSpeed as re_types::Component>::name() {
-//             let maybe_state = re_viewer_context::ViewStateExt::downcast_ref::<
-//                 crate::SpatialViewState,
-//             >(ctx.view_ctx.view_state);
-//             let speed = match maybe_state {
-//                 Ok(spatial_view_state) => {
-//                     let bounding_boxes = &spatial_view_state.bounding_boxes;
-//                     self.speed(bounding_boxes) as f64
-//                 }
-//                 Err(view_system_execution_error) => {
-//                     re_log::error!("Error while downcasting {}", view_system_execution_error);
-//                     // is there a good default?
-//                     1.0
-//                 }
-//             };
-//             let linear_speed = LinearSpeed(re_types::datatypes::Float64(speed));
-//             let fallback_result = linear_speed.into();
-//             return fallback_result;
-//         }
-//         ComponentFallbackProviderResult::ComponentNotHandled
-//     }
-// }
-
 re_viewer_context::impl_component_fallback_provider!(ViewEye => [LinearSpeed]);
 
 impl TypedComponentFallbackProvider<LinearSpeed> for ViewEye {
