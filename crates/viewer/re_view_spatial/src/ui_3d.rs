@@ -131,6 +131,16 @@ impl View3DState {
         //         scene_view_coordinates,
         //     ));
         // }
+        //
+        // FIXME: can we use this for time comparison?
+        // let at = eye_property.query_results.compound_index;
+        // if at.0.is_static() {
+        //     self.interpolate_to_view_eye(default_eye(
+        //         &bounding_boxes.current,
+        //         scene_view_coordinates,
+        //     ));
+        // }
+        // dbg!(at);
 
         // Detect live changes to view coordinates, and interpolate to the new up axis as needed.
         if scene_view_coordinates != self.scene_view_coordinates {
