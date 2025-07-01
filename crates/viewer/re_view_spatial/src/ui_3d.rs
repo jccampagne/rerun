@@ -13,7 +13,7 @@ use re_types::{
         archetypes::{Background, Eye3D, LineGrid3D},
         components::GridSpacing,
     },
-    components::{LinearSpeed, ViewCoordinates, Visible},
+    components::{ViewCoordinates, Visible},
     view_coordinates::SignedAxis3,
 };
 use re_ui::{ContextExt as _, Help, IconText, MouseButtonText, UiExt as _, icons};
@@ -207,8 +207,8 @@ impl View3DState {
             response,
             view_eye_drag_threshold,
             bounding_boxes,
-            &view_ctx,
-            &eye_property,
+            view_ctx,
+            eye_property,
         ) {
             self.last_eye_interaction = Some(Instant::now());
             self.eye_interpolation = None;
