@@ -495,7 +495,7 @@ impl ViewEye {
             Ok(linear_speed) => **linear_speed as f32,
             Err(err) => {
                 re_log::error!("Error while getting linear speed for eye {}", err);
-                self.speed(bounding_boxes)
+                self.fallback_speed_for_mode(bounding_boxes)
             }
         }
     }
@@ -614,7 +614,7 @@ impl TypedComponentFallbackProvider<LinearSpeed> for ViewEye {
             let speed = match maybe_state {
                 Ok(spatial_view_state) => {
                     let bounding_boxes = &spatial_view_state.bounding_boxes;
-                    self.speed(bounding_boxes) as f64
+                    self.fallback_speed_for_mode(bounding_boxes) as f64
                 }
                 Err(view_system_execution_error) => {
                     re_log::error!("Error while downcasting {}", view_system_execution_error);
