@@ -3,7 +3,7 @@ use glam::{Mat4, Quat, Vec3, vec3};
 
 use macaw::IsoTransform;
 
-use re_types::components::LinearSpeed;
+use re_types::{blueprint::components::Eye3DKind, components::LinearSpeed};
 use re_view::controls::{
     DRAG_PAN3D_BUTTON, ROLL_MOUSE, ROLL_MOUSE_ALT, ROLL_MOUSE_MODIFIER, ROTATE3D_BUTTON,
     RuntimeModifiers, SPEED_UP_3D_MODIFIER,
@@ -404,21 +404,19 @@ impl ViewEye {
         view_ctx: &ViewContext<'_>,
         eye_property: &ViewProperty,
     ) -> bool {
-        let mut speed = self.speed(bounding_boxes);
         let eye_linear_speed_comp_descr =
             re_types::blueprint::archetypes::Eye3D::descriptor_translation_speed();
-        // let eye_linear_speed =
-        //     eye_property.component_array::<LinearSpeed>(&eye_linear_speed_comp_descr);
-
         let eye_linear_speed = eye_property.component_or_fallback::<LinearSpeed>(
             view_ctx,
             self,
             &eye_linear_speed_comp_descr,
         );
-
-        match eye_linear_speed {
-            Ok(linear_speed) => speed = *(*linear_speed) as f32,
-            Err(err) => re_log::error!("???????????????????? {}", err),
+        let mut speed = match eye_linear_speed {
+            Ok(linear_speed) => **linear_speed as f32,
+            Err(err) => {
+                re_log::error!("Error while getting linear speed for eye {}", err);
+                self.speed(bounding_boxes)
+            }
         };
         // Modify speed based on modifiers:
         let os = response.ctx.os();
@@ -595,7 +593,7 @@ impl ViewEye {
     }
 }
 
-re_viewer_context::impl_component_fallback_provider!(ViewEye => [LinearSpeed]);
+re_viewer_context::impl_component_fallback_provider!(ViewEye => [LinearSpeed, Eye3DKind]);
 
 impl TypedComponentFallbackProvider<LinearSpeed> for ViewEye {
     fn fallback_for(&self, ctx: &re_viewer_context::QueryContext<'_>) -> LinearSpeed {
@@ -616,5 +614,11 @@ impl TypedComponentFallbackProvider<LinearSpeed> for ViewEye {
             };
             LinearSpeed(re_types::datatypes::Float64(speed))
         }
+    }
+}
+
+impl TypedComponentFallbackProvider<Eye3DKind> for ViewEye {
+    fn fallback_for(&self, _ctx: &re_viewer_context::QueryContext<'_>) -> Eye3DKind {
+        Eye3DKind::Orbital
     }
 }
