@@ -604,24 +604,23 @@ impl ComponentFallbackProvider for ViewEye {
         component: re_types::ComponentType,
     ) -> re_viewer_context::ComponentFallbackProviderResult {
         if component == <LinearSpeed as re_types::Component>::name() {
-            let view_ctx = ctx.view_ctx;
-            let state = view_ctx.view_state;
-            use re_viewer_context::ViewStateExt as _;
-
-            let state = state.downcast_ref::<crate::SpatialViewState>();
-            let speed = match state {
-                Ok(state) => {
-                    let bounding_boxes = &state.bounding_boxes;
+            let maybe_state = re_viewer_context::ViewStateExt::downcast_ref::<
+                crate::SpatialViewState,
+            >(ctx.view_ctx.view_state);
+            let speed = match maybe_state {
+                Ok(spatial_view_state) => {
+                    let bounding_boxes = &spatial_view_state.bounding_boxes;
                     self.speed(bounding_boxes) as f64
                 }
-                Err(err) => {
-                    re_log::error!("err {}", err);
+                Err(view_system_execution_error) => {
+                    re_log::error!("Error while downcasting {}", view_system_execution_error);
+                    // is there a good default?
                     1.0
                 }
             };
-            let v = LinearSpeed(re_types::datatypes::Float64(speed));
-            let res = v.into();
-            return res;
+            let linear_speed = LinearSpeed(re_types::datatypes::Float64(speed));
+            let fallback_result = linear_speed.into();
+            return fallback_result;
         }
         ComponentFallbackProviderResult::ComponentNotHandled
     }
