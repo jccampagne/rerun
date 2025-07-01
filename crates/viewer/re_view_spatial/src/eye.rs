@@ -407,7 +407,7 @@ impl ViewEye {
         view_ctx: &ViewContext<'_>,
         eye_property: &ViewProperty,
     ) -> bool {
-        let mut speed = self.fun_name(bounding_boxes, view_ctx, eye_property);
+        let mut speed = self.linear_speed_from_property(bounding_boxes, view_ctx, eye_property);
         // Modify speed based on modifiers:
         let os = response.ctx.os();
         response.ctx.input(|input| {
@@ -480,8 +480,8 @@ impl ViewEye {
         did_interact
     }
 
-    fn fun_name(
-        &mut self,
+    fn linear_speed_from_property(
+        &self,
         bounding_boxes: &SceneBoundingBoxes,
         view_ctx: &ViewContext<'_>,
         eye_property: &ViewProperty,
