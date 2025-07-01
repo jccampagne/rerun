@@ -419,6 +419,19 @@ impl ViewEye {
             }
         });
 
+        let kind = eye_property.component_or_fallback::<Eye3DKind>(
+            view_ctx,
+            self,
+            &Eye3D::descriptor_kind(),
+        );
+        match kind {
+            Ok(Eye3DKind::FirstPerson) => self.set_mode(EyeMode::FirstPerson),
+            Ok(Eye3DKind::Orbital) => self.set_mode(EyeMode::Orbital),
+            Err(err) => {
+                re_log::error!("error while getting eye 3d kind: {}", err);
+            }
+        };
+
         // Dragging even below the [`drag_threshold`] should be considered interaction.
         // Otherwise we flicker in and out of "has interacted" too quickly.
         let mut did_interact = response.drag_delta().length() > 0.0;
